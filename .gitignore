@@ -1,0 +1,4 @@
+/target
+.idea
+frontend/.vscode
+.DS_Store
