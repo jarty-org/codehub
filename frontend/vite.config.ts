@@ -5,8 +5,10 @@ import Components from "unplugin-vue-components/vite";
 import { fileURLToPath } from "node:url";
 import Unocss from "unocss/vite";
 import { presetAttributify, presetUno } from "unocss";
+import IconsResolver from "unplugin-icons/resolver";
 import { warpperEnv } from "./build";
-import eslintPlugin from "vite-plugin-eslint" 
+import Icons from "unplugin-icons/vite";
+import eslintPlugin from "vite-plugin-eslint";
 
 const root: string = process.cwd();
 
@@ -19,8 +21,9 @@ export default ({ mode }): UserConfigExport => {
     plugins: [
       vue(),
       eslintPlugin({
-        include: ['src/**/*.js', 'src/**/*.vue', 'src/*.js', 'src/*.vue']
+        include: ["src/**/*.js", "src/**/*.vue", "src/*.js", "src/*.vue"],
       }),
+      Icons({ autoInstall: true }),
       AutoImport({
         imports: ["vue", "vue-router", "pinia"],
         eslintrc: {
@@ -37,6 +40,7 @@ export default ({ mode }): UserConfigExport => {
         dirs: ["src/**/components"],
         extensions: ["vue", "ts"],
         dts: "src/types/components.d.ts",
+        resolvers: [IconsResolver()],
       }),
     ],
     resolve: {

@@ -12,6 +12,7 @@ use crate::utils::response::CustomResponse;
 use super::super::models::user;
 use jsonwebtoken::{encode, EncodingKey, Header};
 use crate::config::AppConfig;
+use crate::models::user::Model;
 use crate::utils::auth::{Claims, RefreshToken, UserInfo};
 
 #[derive(Deserialize, Validate)]
@@ -47,7 +48,7 @@ pub struct RefreshTokenVO {
 
 
 #[post("/signup", data = "<signup_dto>")]
-pub async fn signup(db: &State<DatabaseConnection>, signup_dto: Json<SignupDTO>) -> CustomResponse {
+pub async fn signup(db: &State<DatabaseConnection>, app_config: &State<AppConfig>, signup_dto: Json<SignupDTO>) -> CustomResponse {
     if let Err(errors) = signup_dto.validate() {
         for (field, error_vec) in errors.field_errors().iter() {
             for error in &**error_vec {
@@ -87,7 +88,23 @@ pub async fn signup(db: &State<DatabaseConnection>, signup_dto: Json<SignupDTO>)
 
 
     match user.insert(db.inner()).await {
-        Ok(_) => CustomResponse::Text(Status::Created, String::from("signup successfully")),
+        Ok(u) => {
+            let access_token = gen_token(&app_config, u.id.to_owned(), chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(5)).unwrap().timestamp());
+            let refresh_token = gen_token(&app_config, u.id.to_owned(), chrono::Utc::now().checked_add_signed(chrono::Duration::days(30)).unwrap().timestamp());
+
+            if access_token.is_empty() {
+                return CustomResponse::Text(Status::InternalServerError, String::from("login failed"));
+            }
+            if refresh_token.is_empty() {
+                return CustomResponse::Text(Status::InternalServerError, String::from("login failed"));
+            }
+
+            let vo = LoginVO {
+                access_token,
+                refresh_token,
+            };
+            return CustomResponse::Json(Status::Created, json!(vo));
+        }
         Err(err) => {
             error!("create_user error: {}", err);
             return CustomResponse::Text(Status::InternalServerError, String::from("signup failed"));
@@ -102,7 +119,7 @@ pub async fn login(db: &State<DatabaseConnection>, app_config: &State<AppConfig>
         .filter(user::Column::Username.eq(login_dto.account.to_owned()).or(user::Column::Email.eq(login_dto.account.to_owned())))
         .one(db.inner()).await.unwrap_or(None);
     if user_result.is_none() {
-        return CustomResponse::Text(Status::NotFound, String::from("user not found"));
+        return CustomResponse::Text(Status::BadRequest, String::from("user not found"));
     }
     let user = user_result.unwrap();
     let is_match = bcrypt::verify(login_dto.password.to_owned(), user.password.to_owned().as_str()).unwrap_or(false);
@@ -110,31 +127,9 @@ pub async fn login(db: &State<DatabaseConnection>, app_config: &State<AppConfig>
         return CustomResponse::Text(Status::Unauthorized, String::from("password is invalid"));
     }
 
-    let access_token = encode(
-        &Header::default(),
-        &Claims {
-            sub: user.id.to_owned(),
-            exp: chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(5)).unwrap().timestamp(),
-            iss: String::from(app_config.jwt_iss.to_owned()),
-            aud: String::from(app_config.jwt_aud.to_owned()),
-            iat: chrono::Utc::now().timestamp(),
-            jti: uuid::Uuid::new_v4().to_string(),
-            nbf: chrono::Utc::now().timestamp(),
-        }, &EncodingKey::from_secret(app_config.jwt_secret.as_bytes()),
-    ).unwrap_or("".to_string());
+    let access_token = gen_token(&app_config, user.id.to_owned(), chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(5)).unwrap().timestamp());
+    let refresh_token = gen_token(&app_config, user.id.to_owned(), chrono::Utc::now().checked_add_signed(chrono::Duration::days(30)).unwrap().timestamp());
 
-    let refresh_token = encode(
-        &Header::default(),
-        &Claims {
-            sub: user.id.to_owned(),
-            exp: chrono::Utc::now().checked_add_signed(chrono::Duration::days(30)).unwrap().timestamp(),
-            iss: String::from(app_config.jwt_iss.to_owned()),
-            aud: String::from(app_config.jwt_aud.to_owned()),
-            iat: chrono::Utc::now().timestamp(),
-            jti: uuid::Uuid::new_v4().to_string(),
-            nbf: chrono::Utc::now().timestamp(),
-        }, &EncodingKey::from_secret(app_config.jwt_secret.as_bytes()),
-    ).unwrap_or("".to_string());
     if access_token.is_empty() {
         return CustomResponse::Text(Status::InternalServerError, String::from("login failed"));
     }
@@ -163,18 +158,7 @@ pub async fn refresh_token(db: &State<DatabaseConnection>, app_config: &State<Ap
         return CustomResponse::Text(Status::Unauthorized, String::from("refresh_token is invalid"));
     }
 
-    let access_token = encode(
-        &Header::default(),
-        &Claims {
-            sub: user_info.id.to_owned(),
-            exp: chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(5)).unwrap().timestamp(),
-            iss: String::from(app_config.jwt_iss.to_owned()),
-            aud: String::from(app_config.jwt_aud.to_owned()),
-            iat: chrono::Utc::now().timestamp(),
-            jti: uuid::Uuid::new_v4().to_string(),
-            nbf: chrono::Utc::now().timestamp(),
-        }, &EncodingKey::from_secret(app_config.jwt_secret.as_bytes()),
-    ).unwrap_or("".to_string());
+    let access_token = gen_token(&app_config, user_info.id.to_owned(), chrono::Utc::now().checked_add_signed(chrono::Duration::minutes(5)).unwrap().timestamp());
 
     if access_token.is_empty() {
         return CustomResponse::Text(Status::InternalServerError, String::from("login failed"));
@@ -185,4 +169,21 @@ pub async fn refresh_token(db: &State<DatabaseConnection>, app_config: &State<Ap
     };
 
     return CustomResponse::Json(Status::Created, json!(vo));
+}
+
+
+fn gen_token(app_config: &&State<AppConfig>, user_id: String, exp: i64) -> String {
+    let access_token = encode(
+        &Header::default(),
+        &Claims {
+            sub: user_id.to_owned(),
+            exp,
+            iss: String::from(app_config.jwt_iss.to_owned()),
+            aud: String::from(app_config.jwt_aud.to_owned()),
+            iat: chrono::Utc::now().timestamp(),
+            jti: uuid::Uuid::new_v4().to_string(),
+            nbf: chrono::Utc::now().timestamp(),
+        }, &EncodingKey::from_secret(app_config.jwt_secret.as_bytes()),
+    ).unwrap_or("".to_string());
+    access_token
 }

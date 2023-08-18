@@ -20,4 +20,6 @@ pub struct CreateRepositoryDTO {
 }
 
 #[post("/repository", data = "<create_repository_dto>")]
-pub fn create_repository(user_info: UserInfo, create_repository_dto: Json<CreateRepositoryDTO>) -> String {}
+pub fn create_repository(user_info: UserInfo, create_repository_dto: Json<CreateRepositoryDTO>) -> String {
+    return "ok".to_string();
+}

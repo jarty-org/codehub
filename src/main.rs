@@ -14,9 +14,10 @@ extern crate validator;
 use rocket::fairing::AdHoc;
 use rocket::figment::providers::Env;
 use controller::user::{signup, login, refresh_token};
-use controller::system::not_found;
+use controller::system::{not_found, all_options};
 use controller::repository::create_repository;
 use crate::db::create_db;
+use crate::utils::cors::CORS;
 
 #[launch]
 async fn rocket() -> _ {
@@ -30,6 +31,7 @@ async fn rocket() -> _ {
             let app_config = config::AppConfig::new();
             Ok(rocket.manage(app_config))
         }))
+        .attach(CORS)
         .attach(AdHoc::try_on_ignite("Database Setup", |rocket| async {
             let db_url = Env::var("DATABASE_URL").unwrap_or("".parse().unwrap());
             if db_url.is_empty() {
@@ -42,5 +44,5 @@ async fn rocket() -> _ {
             });
             Ok(rocket.manage(db))
         })).mount("/api/v1", routes![signup,login,refresh_token,create_repository])
-        .mount("/", routes![not_found])
+        .mount("/", routes![not_found,all_options])
 }
